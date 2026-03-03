@@ -6,4 +6,14 @@
   * {
     box-sizing: border-box;
   }
+
+  /* iOS safe area for bottom sheet modals */
+  .safe-area-bottom {
+    padding-bottom: max(2rem, env(safe-area-inset-bottom));
+  }
+
+  /* Smooth tap highlight removal on mobile */
+  button {
+    -webkit-tap-highlight-color: transparent;
+  }
 }

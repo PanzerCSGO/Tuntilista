@@ -2,8 +2,12 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Tuntilista",
-  description: "Kaivuu- ja urakkatyön tuntikirjaus",
+  title: "Tuntilista | KMR INFRA OY",
+  description: "KMR INFRA OY – kaivuu- ja urakkatyön tuntikirjaus",
+  icons: {
+    icon: "/kmr-logo.jpg",
+    apple: "/kmr-logo.jpg",
+  },
 };
 
 export default function RootLayout({
