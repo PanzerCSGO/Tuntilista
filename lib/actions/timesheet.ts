@@ -10,6 +10,34 @@ import type {
   DayRow,
 } from "@/lib/types";
 
+// ── Helper: get authenticated user or throw ──
+async function requireUser(supabase: Awaited<ReturnType<typeof createClient>>) {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("Ei kirjautunut");
+  return user;
+}
+
+// ── Helper: verify ownership + check lock ──
+async function requireOwnDraftSheet(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  timesheetId: string,
+  userId: string
+) {
+  const { data: sheet, error } = await supabase
+    .from("timesheets")
+    .select("id, status")
+    .eq("id", timesheetId)
+    .eq("user_id", userId)
+    .single();
+
+  if (error || !sheet) throw new Error("Tuntilista ei löydy tai ei ole sinun");
+  if (sheet.status === "sent")
+    throw new Error("Lähetettyä lappua ei voi muokata");
+  return sheet;
+}
+
 // ---- Fetch all timesheets ----
 export async function getTimesheets(): Promise<Timesheet[]> {
   const supabase = await createClient();
@@ -50,10 +78,8 @@ export async function getTimesheetWithRows(
       .order("date", { ascending: true }),
   ]);
 
-  // Merge: build map by date
   const rowMap = new Map<string, DayRow>();
 
-  // Days provide project_no / meters / note
   for (const d of (days ?? []) as TimesheetDay[]) {
     rowMap.set(d.date, {
       date: d.date,
@@ -64,7 +90,6 @@ export async function getTimesheetWithRows(
     });
   }
 
-  // Entries add machine hours
   for (const e of (entries ?? []) as TimesheetEntry[]) {
     if (!rowMap.has(e.date)) {
       rowMap.set(e.date, {
@@ -87,7 +112,7 @@ export async function getTimesheetWithRows(
 
   const totalHours = rows.reduce(
     (sum, row) =>
-      sum + Object.values(row.machines).reduce((s, h) => s + (h ?? 0), 0),
+      sum + Object.values(row.machines).reduce<number>((s, h) => s + (h ?? 0), 0),
     0
   );
 
@@ -99,10 +124,7 @@ export async function createTimesheet(data: {
   address: string;
 }): Promise<Timesheet> {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) throw new Error("Ei kirjautunut");
+  const user = await requireUser(supabase);
 
   const { data: sheet, error } = await supabase
     .from("timesheets")
@@ -110,6 +132,7 @@ export async function createTimesheet(data: {
       user_id: user.id,
       project_number: "",
       address: data.address,
+      status: "draft",
     })
     .select()
     .single();
@@ -124,17 +147,27 @@ export async function updateTimesheetHeader(
   data: { address: string }
 ): Promise<void> {
   const supabase = await createClient();
+  const user = await requireUser(supabase);
+  await requireOwnDraftSheet(supabase, id, user.id);
+
   const { error } = await supabase
     .from("timesheets")
     .update({ address: data.address })
-    .eq("id", id);
+    .eq("id", id)
+    .eq("user_id", user.id);
   if (error) throw new Error(error.message);
 }
 
 // ---- Delete timesheet ----
 export async function deleteTimesheet(id: string): Promise<void> {
   const supabase = await createClient();
-  const { error } = await supabase.from("timesheets").delete().eq("id", id);
+  const user = await requireUser(supabase);
+
+  const { error } = await supabase
+    .from("timesheets")
+    .delete()
+    .eq("id", id)
+    .eq("user_id", user.id);
   if (error) throw new Error(error.message);
   revalidatePath("/app");
 }
@@ -142,20 +175,9 @@ export async function deleteTimesheet(id: string): Promise<void> {
 // ---- Add a new day ----
 export async function addDay(timesheetId: string): Promise<string> {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) throw new Error("Ei kirjautunut");
+  const user = await requireUser(supabase);
+  await requireOwnDraftSheet(supabase, timesheetId, user.id);
 
-  const { data: sheet } = await supabase
-    .from("timesheets")
-    .select("id")
-    .eq("id", timesheetId)
-    .eq("user_id", user.id)
-    .single();
-  if (!sheet) throw new Error("Timesheet ei löydy");
-
-  // Find latest date from timesheet_days
   const { data: latest } = await supabase
     .from("timesheet_days")
     .select("date")
@@ -166,14 +188,13 @@ export async function addDay(timesheetId: string): Promise<string> {
 
   let nextDate: string;
   if (latest?.date) {
-    const d = new Date(latest.date);
+    const d = new Date(latest.date + "T00:00:00");
     d.setDate(d.getDate() + 1);
     nextDate = d.toISOString().split("T")[0];
   } else {
     nextDate = new Date().toISOString().split("T")[0];
   }
 
-  // Upsert the day row
   const { error } = await supabase.from("timesheet_days").upsert(
     {
       timesheet_id: timesheetId,
@@ -199,10 +220,8 @@ export async function upsertDayMeta(data: {
   note: string | null;
 }): Promise<void> {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) throw new Error("Ei kirjautunut");
+  const user = await requireUser(supabase);
+  await requireOwnDraftSheet(supabase, data.timesheet_id, user.id);
 
   const { error } = await supabase.from("timesheet_days").upsert(
     {
@@ -226,10 +245,8 @@ export async function upsertEntry(data: {
   hours: number;
 }): Promise<void> {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) throw new Error("Ei kirjautunut");
+  const user = await requireUser(supabase);
+  await requireOwnDraftSheet(supabase, data.timesheet_id, user.id);
 
   if (data.hours === 0) {
     await supabase
@@ -260,6 +277,9 @@ export async function deleteDayRow(
   date: string
 ): Promise<void> {
   const supabase = await createClient();
+  const user = await requireUser(supabase);
+  await requireOwnDraftSheet(supabase, timesheet_id, user.id);
+
   await Promise.all([
     supabase
       .from("timesheet_days")
@@ -272,6 +292,21 @@ export async function deleteDayRow(
       .eq("timesheet_id", timesheet_id)
       .eq("date", date),
   ]);
+}
+
+// ---- Mark timesheet as sent ----
+export async function markTimesheetSent(id: string): Promise<void> {
+  const supabase = await createClient();
+  const user = await requireUser(supabase);
+
+  const { error } = await supabase
+    .from("timesheets")
+    .update({ status: "sent", sent_at: new Date().toISOString() })
+    .eq("id", id)
+    .eq("user_id", user.id)
+    .neq("status", "sent");
+
+  if (error) throw new Error(error.message);
 }
 
 // ---- Autocomplete: last project_no used ----

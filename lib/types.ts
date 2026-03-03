@@ -33,6 +33,8 @@ export type Timesheet = {
   period_end: string | null;
   project_number: string;
   address: string;
+  status: "draft" | "sent";
+  sent_at: string | null;
   created_at: string;
   updated_at: string;
 };

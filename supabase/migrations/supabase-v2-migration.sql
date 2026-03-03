@@ -37,6 +37,11 @@ create index if not exists timesheet_entries_date_idx on public.timesheet_entrie
 -- 4) RLS timesheets
 alter table public.timesheets enable row level security;
 
+drop policy if exists "timesheets_select_own" on public.timesheets;
+drop policy if exists "timesheets_insert_own" on public.timesheets;
+drop policy if exists "timesheets_update_own" on public.timesheets;
+drop policy if exists "timesheets_delete_own" on public.timesheets;
+
 create policy "timesheets_select_own" on public.timesheets
   for select using (auth.uid() = user_id);
 create policy "timesheets_insert_own" on public.timesheets
@@ -48,6 +53,11 @@ create policy "timesheets_delete_own" on public.timesheets
 
 -- 5) RLS timesheet_entries
 alter table public.timesheet_entries enable row level security;
+
+drop policy if exists "tse_select_own" on public.timesheet_entries;
+drop policy if exists "tse_insert_own" on public.timesheet_entries;
+drop policy if exists "tse_update_own" on public.timesheet_entries;
+drop policy if exists "tse_delete_own" on public.timesheet_entries;
 
 create policy "tse_select_own" on public.timesheet_entries
   for select using (auth.uid() = user_id);
@@ -66,35 +76,37 @@ declare
   v_user_id uuid;
   v_timesheet_id uuid;
 begin
-  for v_user_id in
-    select distinct user_id from public.time_entries
-  loop
-    -- Tarkista onko jo draft
-    select id into v_timesheet_id
-    from public.timesheets
-    where user_id = v_user_id
-      and project_number = 'TUONTI'
-    limit 1;
+  if exists (select 1 from information_schema.tables where table_schema = 'public' and table_name = 'time_entries') then
+    for v_user_id in
+      select distinct user_id from public.time_entries
+    loop
+      -- Tarkista onko jo draft
+      select id into v_timesheet_id
+      from public.timesheets
+      where user_id = v_user_id
+        and project_number = 'TUONTI'
+      limit 1;
 
-    if v_timesheet_id is null then
-      insert into public.timesheets (user_id, project_number, address)
-      values (v_user_id, 'TUONTI', 'Vanhat merkinnät')
-      returning id into v_timesheet_id;
-    end if;
+      if v_timesheet_id is null then
+        insert into public.timesheets (user_id, project_number, address)
+        values (v_user_id, 'TUONTI', 'Vanhat merkinnät')
+        returning id into v_timesheet_id;
+      end if;
 
-    -- Siirrä time_entries -> timesheet_entries (upsert)
-    insert into public.timesheet_entries (timesheet_id, user_id, date, machine, hours)
-    select
-      v_timesheet_id,
-      user_id,
-      date,
-      machine,
-      hours
-    from public.time_entries
-    where user_id = v_user_id
-    on conflict (timesheet_id, date, machine) do update
-      set hours = excluded.hours;
-  end loop;
+      -- Siirrä time_entries -> timesheet_entries (upsert)
+      insert into public.timesheet_entries (timesheet_id, user_id, date, machine, hours)
+      select
+        v_timesheet_id,
+        user_id,
+        date,
+        machine,
+        hours
+      from public.time_entries
+      where user_id = v_user_id
+      on conflict (timesheet_id, date, machine) do update
+        set hours = excluded.hours;
+    end loop;
+  end if;
 end $$;
 
 -- 7) updated_at triggerit

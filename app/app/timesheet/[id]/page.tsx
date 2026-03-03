@@ -1,4 +1,4 @@
-import { notFound, redirect } from "next/navigation";
+import { redirect, notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getTimesheetWithRows } from "@/lib/actions/timesheet";
 import TimesheetCard from "@/components/timesheet/TimesheetCard";
@@ -9,6 +9,7 @@ interface Props {
 
 export default async function TimesheetPage({ params }: Props) {
   const { id } = await params;
+
   const supabase = await createClient();
   const {
     data: { user },

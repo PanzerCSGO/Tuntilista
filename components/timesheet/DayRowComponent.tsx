@@ -1,224 +1,191 @@
 "use client";
 
-import { useState, useRef } from "react";
-import { MACHINES } from "@/lib/types";
-import type { DayRow } from "@/lib/types";
+import { useCallback, useRef } from "react";
 import { upsertDayMeta } from "@/lib/actions/timesheet";
+import type { DayRow } from "@/lib/types";
 
 interface Props {
   row: DayRow;
-  isFirst: boolean;
   canCopyPrev: boolean;
   timesheetId: string;
+  locked: boolean;
   onOpenMachine: (date: string, machine: string) => void;
   onCopyPrev: () => void;
   onDeleteDay: () => void;
-  onSaveStatus: (s: "saving" | "saved" | "error") => void;
-}
-
-function formatDate(d: string) {
-  const [, m, day] = d.split("-");
-  const date = new Date(d + "T12:00:00");
-  const weekdays = ["Su", "Ma", "Ti", "Ke", "To", "Pe", "La"];
-  const wd = weekdays[date.getDay()];
-  return { short: `${day}.${m}`, wd };
+  onSaveStatus: (status: "idle" | "saving" | "saved" | "error") => void;
+  onRowChange: (date: string, updated: Partial<DayRow>) => void;
 }
 
 export default function DayRowComponent({
   row,
   canCopyPrev,
   timesheetId,
+  locked,
   onOpenMachine,
   onCopyPrev,
   onDeleteDay,
   onSaveStatus,
+  onRowChange,
 }: Props) {
-  const [projectNo, setProjectNo] = useState(row.project_no ?? "");
-  const [meters, setMeters] = useState(
-    row.meters != null ? String(row.meters) : ""
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const scheduleMetaSave = useCallback(
+    (fields: { project_no: string; meters: number | null; note: string | null }) => {
+      if (locked) return;
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      onSaveStatus("saving");
+      debounceRef.current = setTimeout(async () => {
+        try {
+          await upsertDayMeta({
+            timesheet_id: timesheetId,
+            date: row.date,
+            project_no: fields.project_no,
+            meters: fields.meters,
+            note: fields.note,
+          });
+          onSaveStatus("saved");
+          setTimeout(() => onSaveStatus("idle"), 2000);
+        } catch {
+          onSaveStatus("error");
+        }
+      }, 600);
+    },
+    [timesheetId, row.date, locked, onSaveStatus]
   );
-  const [note, setNote] = useState(row.note ?? "");
-  const [showNote, setShowNote] = useState(!!(row.note));
 
-  const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+  function handleFieldChange(field: "project_no" | "meters" | "note", raw: string) {
+    if (locked) return;
+    let updated: Partial<DayRow>;
+    let metersVal: number | null;
 
-  const { short, wd } = formatDate(row.date);
-  const dayTotal = Object.values(row.machines).reduce(
-    (s, h) => s + (h ?? 0),
-    0
-  );
-  const filledMachines = MACHINES.filter((m) => (row.machines[m] ?? 0) > 0);
-
-  function scheduleSave(
-    pNo: string,
-    m: string,
-    n: string
-  ) {
-    if (debounce.current) clearTimeout(debounce.current);
-    onSaveStatus("saving");
-    debounce.current = setTimeout(async () => {
-      try {
-        await upsertDayMeta({
-          timesheet_id: timesheetId,
-          date: row.date,
-          project_no: pNo,
-          meters: m !== "" ? parseFloat(m) : null,
-          note: n || null,
-        });
-        onSaveStatus("saved");
-      } catch (err) {
-        console.error("upsertDayMeta:", err);
-        onSaveStatus("error");
-      }
-    }, 600);
+    switch (field) {
+      case "project_no":
+        updated = { project_no: raw };
+        onRowChange(row.date, updated);
+        scheduleMetaSave({ project_no: raw, meters: row.meters, note: row.note });
+        break;
+      case "meters":
+        metersVal = raw === "" ? null : parseFloat(raw);
+        if (raw !== "" && isNaN(metersVal!)) return;
+        updated = { meters: metersVal };
+        onRowChange(row.date, updated);
+        scheduleMetaSave({ project_no: row.project_no, meters: metersVal, note: row.note });
+        break;
+      case "note":
+        updated = { note: raw || null };
+        onRowChange(row.date, updated);
+        scheduleMetaSave({ project_no: row.project_no, meters: row.meters, note: raw || null });
+        break;
+    }
   }
 
-  const inputBase =
-    "w-full text-sm bg-transparent border-b border-gray-200 pb-0.5 focus:outline-none focus:border-orange-500 text-gray-800 transition-colors";
+  const dateObj = new Date(row.date + "T00:00:00");
+  const weekday = dateObj.toLocaleDateString("fi-FI", { weekday: "short" });
+  const dateLabel = dateObj.toLocaleDateString("fi-FI", { day: "numeric", month: "numeric" });
+
+  const dayHours = Object.values(row.machines).reduce<number>((s, h) => s + (h ?? 0), 0);
+
+  const machineEntries = Object.entries(row.machines).filter(([, h]) => h && h > 0);
 
   return (
     <div className="px-4 py-3">
-      {/* Top row: date + total + actions */}
-      <div className="flex items-center justify-between mb-3">
+      {/* Date + hours */}
+      <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5">
-            <span className="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-gray-100 text-xs font-bold text-gray-600 select-none">
-              {wd}
-            </span>
-            <span className="text-sm font-bold text-gray-900">{short}</span>
-          </div>
-          {dayTotal > 0 && (
-            <span className="text-xs font-semibold text-orange-600 bg-orange-50 px-2 py-0.5 rounded-full">
-              {dayTotal.toFixed(1)} h
-            </span>
-          )}
+          <span className="text-xs font-bold text-gray-400 uppercase w-7">{weekday}</span>
+          <span className="text-sm font-semibold text-gray-800">{dateLabel}</span>
         </div>
-
-        <div className="flex items-center gap-1">
-          {canCopyPrev && (
+        <div className="flex items-center gap-2">
+          {dayHours > 0 && (
+            <span className="text-sm font-bold text-orange-600">{dayHours} h</span>
+          )}
+          {!locked && (
             <button
               type="button"
-              onClick={onCopyPrev}
-              className="text-[11px] text-blue-500 hover:text-blue-700 hover:bg-blue-50 px-2 py-1 rounded-lg transition-colors"
+              onClick={onDeleteDay}
+              className="text-gray-300 hover:text-red-400 transition-colors p-1"
+              title="Poista päivä"
             >
-              Kopioi ↑
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
             </button>
           )}
-          <button
-            type="button"
-            onClick={onDeleteDay}
-            className="text-gray-300 hover:text-red-400 hover:bg-red-50 p-1.5 rounded-lg transition-colors"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-            </svg>
-          </button>
         </div>
       </div>
 
-      {/* Day meta: project + meters */}
-      <div className="grid grid-cols-2 gap-3 mb-3">
-        <div>
-          <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">
-            Projekti nro
-          </label>
+      {/* Meta fields */}
+      <div className="grid grid-cols-12 gap-2 mb-2">
+        <div className="col-span-4">
           <input
             type="text"
-            value={projectNo}
-            onChange={(e) => {
-              setProjectNo(e.target.value);
-              scheduleSave(e.target.value, meters, note);
-            }}
-            className={inputBase}
-            placeholder="esim. 8435"
+            value={row.project_no}
+            onChange={(e) => handleFieldChange("project_no", e.target.value)}
+            disabled={locked}
+            className="w-full text-xs border-b border-gray-200 bg-transparent pb-0.5 focus:outline-none focus:border-orange-400 text-gray-700 disabled:text-gray-400 disabled:cursor-not-allowed placeholder:text-gray-300"
+            placeholder="Projekti nro"
           />
         </div>
-        <div>
-          <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">
-            Metrit (m)
-          </label>
+        <div className="col-span-3">
           <input
             type="number"
-            inputMode="decimal"
             step="0.1"
-            min="0"
-            value={meters}
-            onChange={(e) => {
-              setMeters(e.target.value);
-              scheduleSave(projectNo, e.target.value, note);
-            }}
-            className={inputBase}
-            placeholder="0.0"
+            value={row.meters != null ? String(row.meters) : ""}
+            onChange={(e) => handleFieldChange("meters", e.target.value)}
+            disabled={locked}
+            className="w-full text-xs border-b border-gray-200 bg-transparent pb-0.5 focus:outline-none focus:border-orange-400 text-gray-700 disabled:text-gray-400 disabled:cursor-not-allowed placeholder:text-gray-300"
+            placeholder="Metrit"
           />
         </div>
-      </div>
-
-      {/* Note toggle */}
-      {!showNote ? (
-        <button
-          type="button"
-          onClick={() => setShowNote(true)}
-          className="text-xs text-gray-400 hover:text-gray-600 flex items-center gap-1 mb-3 transition-colors"
-        >
-          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-          </svg>
-          Lisää huomio
-        </button>
-      ) : (
-        <div className="mb-3">
-          <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">
-            Huomio
-          </label>
+        <div className="col-span-5">
           <input
             type="text"
-            value={note}
-            onChange={(e) => {
-              setNote(e.target.value);
-              scheduleSave(projectNo, meters, e.target.value);
-            }}
-            className={inputBase}
-            placeholder="Vapaa huomio..."
-            autoFocus
+            value={row.note ?? ""}
+            onChange={(e) => handleFieldChange("note", e.target.value)}
+            disabled={locked}
+            className="w-full text-xs border-b border-gray-200 bg-transparent pb-0.5 focus:outline-none focus:border-orange-400 text-gray-700 disabled:text-gray-400 disabled:cursor-not-allowed placeholder:text-gray-300"
+            placeholder="Huomio"
           />
         </div>
-      )}
-
-      {/* Machine chips */}
-      <div className="flex flex-wrap gap-2">
-        {MACHINES.map((machine) => {
-          const hours = row.machines[machine] ?? 0;
-          const filled = hours > 0;
-          return (
-            <button
-              key={machine}
-              type="button"
-              onClick={() => onOpenMachine(row.date, machine)}
-              className={`
-                flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium transition-all active:scale-95
-                ${filled
-                  ? "bg-orange-500 text-white shadow-sm shadow-orange-200"
-                  : "bg-gray-100 text-gray-500 hover:bg-gray-200"
-                }
-              `}
-            >
-              <span className="text-xs leading-none">{machine}</span>
-              {filled && (
-                <span className="text-xs font-bold leading-none bg-white/25 px-1.5 py-0.5 rounded-md">
-                  {hours % 1 === 0 ? hours.toFixed(0) : hours.toFixed(1)}
-                </span>
-              )}
-            </button>
-          );
-        })}
       </div>
 
-      {filledMachines.length > 1 && (
-        <div className="mt-2 text-xs text-gray-400">
-          {filledMachines
-            .map((m) => `${m}: ${(row.machines[m] ?? 0).toFixed(1)}h`)
-            .join(" · ")}
-        </div>
+      {/* Machine chips */}
+      <div className="flex flex-wrap gap-1.5">
+        {machineEntries.map(([machine, hours]) => (
+          <button
+            key={machine}
+            type="button"
+            onClick={() => !locked && onOpenMachine(row.date, machine)}
+            disabled={locked}
+            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-orange-50 text-orange-700 text-xs font-medium border border-orange-100 disabled:opacity-60 disabled:cursor-not-allowed hover:bg-orange-100 transition-colors"
+          >
+            {machine}
+            <span className="font-bold">{hours}h</span>
+          </button>
+        ))}
+        {!locked && (
+          <button
+            type="button"
+            onClick={() => onOpenMachine(row.date, "")}
+            className="inline-flex items-center gap-0.5 px-2 py-1 rounded-lg bg-gray-50 text-gray-400 text-xs border border-gray-100 hover:bg-gray-100 hover:text-gray-600 transition-colors"
+          >
+            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+            </svg>
+            Kone
+          </button>
+        )}
+      </div>
+
+      {/* Copy prev */}
+      {!locked && canCopyPrev && (
+        <button
+          type="button"
+          onClick={onCopyPrev}
+          className="mt-2 text-[10px] text-gray-400 hover:text-gray-600 transition-colors"
+        >
+          Kopioi edellinen →
+        </button>
       )}
     </div>
   );
