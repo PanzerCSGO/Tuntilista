@@ -67,6 +67,7 @@ export type TimesheetDay = {
 // ---- Ryhmitelty päivärivi ----
 export type DayRow = {
   date: string;
+  address: string;
   project_no: string;
   meters: number | null;
   note: string | null;

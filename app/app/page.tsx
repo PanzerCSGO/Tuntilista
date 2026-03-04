@@ -11,6 +11,15 @@ function formatDate(d: string | null) {
   return `${day}.${m}.${y}`;
 }
 
+function getWeekNumber(dateStr: string): number {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  // ISO week: Thursday determines the week
+  date.setUTCDate(date.getUTCDate() + 4 - (date.getUTCDay() || 7));
+  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+  return Math.ceil(((date.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
+}
+
 async function checkTablesExist(): Promise<boolean> {
   const supabase = await createClient();
   const { error } = await supabase.from("timesheets").select("id").limit(1);
@@ -76,22 +85,25 @@ export default async function AppPage() {
           {sheets.map((s) => (
             <div key={s.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
               <Link href={`/app/timesheet/${s.id}`} className="block p-4">
-                <div className="flex items-start justify-between gap-2">
+                <div className="flex items-center justify-between gap-2">
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-orange-50 text-orange-700 text-xs font-semibold">
-                        #{s.project_number || "–"}
-                      </span>
-                      {s.period_start && (
-                        <span className="text-xs text-gray-400">
-                          {formatDate(s.period_start)}{s.period_end ? ` – ${formatDate(s.period_end)}` : ""}
+                    <p className="text-sm text-gray-600">
+                      <span className="font-semibold text-gray-800">Vko {getWeekNumber(s.created_at.split("T")[0])}</span>
+                      {" · "}Luotu {formatDate(s.created_at.split("T")[0])}
+                    </p>
+                    {s.status === "sent" && s.sent_at && (
+                      <div className="flex items-center gap-1.5 mt-1">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-50 text-green-700 text-xs font-semibold border border-green-200">
+                          <span className="w-1.5 h-1.5 rounded-full bg-green-500 inline-block" />
+                          Lähetetty
                         </span>
-                      )}
-                    </div>
-                    <p className="text-sm font-medium text-gray-800 truncate">{s.address || "Ei osoitetta"}</p>
-                    <p className="text-xs text-gray-400 mt-0.5">Luotu {formatDate(s.created_at.split("T")[0])}</p>
+                        <span className="text-xs text-gray-400">
+                          {formatDate(s.sent_at.split("T")[0])}
+                        </span>
+                      </div>
+                    )}
                   </div>
-                  <div className="text-orange-400 flex-shrink-0 mt-1">
+                  <div className="text-orange-400 flex-shrink-0">
                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
                     </svg>

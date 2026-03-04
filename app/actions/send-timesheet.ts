@@ -21,8 +21,10 @@ export async function sendTimesheet(timesheetId: string) {
 
   const pdfBytes = await generateTimesheetPdf(ts, user.email ?? "");
 
+  // TODO: poista override kun domain on verifioitu
+  const recipientOverride = process.env.EMAIL_TO_OVERRIDE;
   await sendTimesheetEmail({
-    to: user.email ?? "",
+    to: recipientOverride || user.email || "",
     pdfBytes,
     timesheetId,
   });

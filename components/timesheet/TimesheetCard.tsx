@@ -4,12 +4,12 @@ import { useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import {
   upsertEntry,
-  updateTimesheetHeader,
   deleteDayRow,
   addDay,
+  deleteEntry,
+  updateDayDate,
 } from "@/lib/actions/timesheet";
 import { sendTimesheet } from "@/app/actions/send-timesheet";
-import { MACHINES } from "@/lib/types";
 import type { TimesheetWithRows, DayRow } from "@/lib/types";
 import DayRowComponent from "./DayRowComponent";
 import MachineModal from "./MachineModal";
@@ -25,7 +25,6 @@ export default function TimesheetCard({ sheet, userEmail }: Props) {
   const router = useRouter();
 
   const [rows, setRows] = useState<DayRow[]>(sheet.rows);
-  const [address, setAddress] = useState(sheet.address);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [addingDay, setAddingDay] = useState(false);
   const [sending, setSending] = useState(false);
@@ -37,7 +36,6 @@ export default function TimesheetCard({ sheet, userEmail }: Props) {
     currentHours: number;
   } | null>(null);
 
-  const headerDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   const newDayRef = useRef<HTMLDivElement | null>(null);
 
   const totalHours = rows.reduce(
@@ -45,21 +43,6 @@ export default function TimesheetCard({ sheet, userEmail }: Props) {
       sum + Object.values(row.machines).reduce<number>((s, h) => s + (h ?? 0), 0),
     0
   );
-
-  function triggerHeaderSave(addr: string) {
-    if (locked) return;
-    if (headerDebounce.current) clearTimeout(headerDebounce.current);
-    setSaveStatus("saving");
-    headerDebounce.current = setTimeout(async () => {
-      try {
-        await updateTimesheetHeader(sheet.id, { address: addr });
-        setSaveStatus("saved");
-        setTimeout(() => setSaveStatus("idle"), 2000);
-      } catch {
-        setSaveStatus("error");
-      }
-    }, 600);
-  }
 
   const saveCell = useCallback(
     async (date: string, machine: string, hours: number) => {
@@ -78,7 +61,7 @@ export default function TimesheetCard({ sheet, userEmail }: Props) {
         }
         return [
           ...prev,
-          { date, project_no: "", meters: null, note: null, machines: hours > 0 ? { [machine]: hours } : {} },
+          { date, address: "", project_no: "", meters: null, note: null, machines: hours > 0 ? { [machine]: hours } : {} },
         ].sort((a, b) => a.date.localeCompare(b.date));
       });
       try {
@@ -108,7 +91,7 @@ export default function TimesheetCard({ sheet, userEmail }: Props) {
         if (prev.find((r) => r.date === newDate)) return prev;
         return [
           ...prev,
-          { date: newDate, project_no: "", meters: null, note: null, machines: {} },
+          { date: newDate, address: "", project_no: "", meters: null, note: null, machines: {} },
         ].sort((a, b) => a.date.localeCompare(b.date));
       });
       setSaveStatus("saved");
@@ -132,7 +115,7 @@ export default function TimesheetCard({ sheet, userEmail }: Props) {
     setRows((prevRows) =>
       prevRows.map((r) =>
         r.date === targetDate
-          ? { ...r, project_no: prev.project_no, machines: { ...prev.machines } }
+          ? { ...r, address: prev.address, project_no: prev.project_no, machines: { ...prev.machines } }
           : r
       )
     );
@@ -149,13 +132,50 @@ export default function TimesheetCard({ sheet, userEmail }: Props) {
     setTimeout(() => setSaveStatus("idle"), 1500);
   }
 
+  async function handleDeleteMachine(date: string, machine: string) {
+    if (locked) return;
+    setRows((prev) =>
+      prev.map((r) => {
+        if (r.date !== date) return r;
+        const machines = { ...r.machines };
+        delete machines[machine];
+        return { ...r, machines };
+      })
+    );
+    setSaveStatus("saving");
+    try {
+      await deleteEntry(sheet.id, date, machine);
+      setSaveStatus("saved");
+      setTimeout(() => setSaveStatus("idle"), 1500);
+    } catch {
+      setSaveStatus("error");
+    }
+  }
+
+  async function handleDateChange(oldDate: string, newDate: string) {
+    if (locked) return;
+    // Check for duplicate date
+    if (rows.some((r) => r.date === newDate)) return;
+    setRows((prev) =>
+      prev
+        .map((r) => (r.date === oldDate ? { ...r, date: newDate } : r))
+        .sort((a, b) => a.date.localeCompare(b.date))
+    );
+    setSaveStatus("saving");
+    try {
+      await updateDayDate(sheet.id, oldDate, newDate);
+      setSaveStatus("saved");
+      setTimeout(() => setSaveStatus("idle"), 2000);
+    } catch {
+      setSaveStatus("error");
+    }
+  }
+
   function openModal(date: string, machine: string) {
     if (locked) return;
     if (!machine) {
-      const row = rows.find((r) => r.date === date);
-      const usedMachines = new Set(Object.keys(row?.machines ?? {}));
-      const firstUnused = MACHINES.find((m) => !usedMachines.has(m)) ?? MACHINES[0];
-      setModal({ date, machine: firstUnused, currentHours: 0 });
+      // This shouldn't happen anymore since we use dropdown, but fallback
+      setModal({ date, machine: "", currentHours: 0 });
     } else {
       const row = rows.find((r) => r.date === date);
       setModal({ date, machine, currentHours: row?.machines[machine] ?? 0 });
@@ -238,30 +258,12 @@ export default function TimesheetCard({ sheet, userEmail }: Props) {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="col-span-2">
-              <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">
-                Työntekijä
-              </label>
-              <div className="text-sm text-gray-600 border-b border-gray-100 pb-1">
-                {userEmail}
-              </div>
-            </div>
-            <div className="col-span-2">
-              <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">
-                Osoite / Kohde
-              </label>
-              <input
-                type="text"
-                value={address}
-                onChange={(e) => {
-                  setAddress(e.target.value);
-                  triggerHeaderSave(e.target.value);
-                }}
-                disabled={locked}
-                className="w-full text-sm border-b border-gray-300 bg-transparent pb-1 focus:outline-none focus:border-orange-500 text-gray-800 disabled:text-gray-400 disabled:cursor-not-allowed"
-                placeholder="esim. Metsätie 4, Helsinki"
-              />
+          <div>
+            <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">
+              Työntekijä
+            </label>
+            <div className="text-sm text-gray-600 border-b border-gray-100 pb-1">
+              {userEmail}
             </div>
           </div>
         </div>
@@ -279,7 +281,7 @@ export default function TimesheetCard({ sheet, userEmail }: Props) {
         <div className="divide-y divide-gray-100">
           {rows.length === 0 ? (
             <div className="px-4 py-8 text-center">
-              <p className="text-sm text-gray-400">Paina &quot;Lisää päivä&quot; alta.</p>
+              <p className="text-sm text-gray-400">Paina &quot;Lisää kohde&quot; alta.</p>
             </div>
           ) : (
             rows.map((row, idx) => (
@@ -295,6 +297,8 @@ export default function TimesheetCard({ sheet, userEmail }: Props) {
                   onOpenMachine={openModal}
                   onCopyPrev={() => copyPrevDay(row.date)}
                   onDeleteDay={() => handleDeleteDay(row.date)}
+                  onDeleteMachine={handleDeleteMachine}
+                  onDateChange={handleDateChange}
                   onSaveStatus={setSaveStatus}
                   onRowChange={handleRowChange}
                 />
@@ -325,7 +329,7 @@ export default function TimesheetCard({ sheet, userEmail }: Props) {
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
                   </svg>
-                  Lisää päivä
+                  Lisää kohde
                 </>
               )}
             </button>

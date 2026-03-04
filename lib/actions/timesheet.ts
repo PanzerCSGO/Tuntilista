@@ -83,6 +83,7 @@ export async function getTimesheetWithRows(
   for (const d of (days ?? []) as TimesheetDay[]) {
     rowMap.set(d.date, {
       date: d.date,
+      address: (d as TimesheetDay & { address?: string }).address ?? "",
       project_no: d.project_no ?? "",
       meters: d.meters ?? null,
       note: d.note ?? null,
@@ -94,6 +95,7 @@ export async function getTimesheetWithRows(
     if (!rowMap.has(e.date)) {
       rowMap.set(e.date, {
         date: e.date,
+        address: "",
         project_no: "",
         meters: null,
         note: null,
@@ -172,49 +174,64 @@ export async function deleteTimesheet(id: string): Promise<void> {
   revalidatePath("/app");
 }
 
+// ---- Helper: add days to YYYY-MM-DD string (timezone-safe) ----
+function addDaysToDateStr(dateStr: string, days: number): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d + days));
+  return date.toISOString().split("T")[0];
+}
+
+function todayDateStr(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+}
+
 // ---- Add a new day ----
 export async function addDay(timesheetId: string): Promise<string> {
   const supabase = await createClient();
   const user = await requireUser(supabase);
   await requireOwnDraftSheet(supabase, timesheetId, user.id);
 
-  const { data: latest } = await supabase
+  const { data: existingDays } = await supabase
     .from("timesheet_days")
     .select("date")
     .eq("timesheet_id", timesheetId)
-    .order("date", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .order("date", { ascending: false });
+
+  const existingDates = new Set((existingDays ?? []).map((d) => d.date));
 
   let nextDate: string;
-  if (latest?.date) {
-    const d = new Date(latest.date + "T00:00:00");
-    d.setDate(d.getDate() + 1);
-    nextDate = d.toISOString().split("T")[0];
+  if (existingDays && existingDays.length > 0) {
+    nextDate = addDaysToDateStr(existingDays[0].date, 1);
+    // Skip dates that already exist (max 365 to prevent infinite loop)
+    let safety = 0;
+    while (existingDates.has(nextDate) && safety < 365) {
+      nextDate = addDaysToDateStr(nextDate, 1);
+      safety++;
+    }
   } else {
-    nextDate = new Date().toISOString().split("T")[0];
+    nextDate = todayDateStr();
   }
 
-  const { error } = await supabase.from("timesheet_days").upsert(
-    {
-      timesheet_id: timesheetId,
-      user_id: user.id,
-      date: nextDate,
-      project_no: "",
-      meters: null,
-      note: null,
-    },
-    { onConflict: "timesheet_id,date" }
-  );
+  const { error } = await supabase.from("timesheet_days").insert({
+    timesheet_id: timesheetId,
+    user_id: user.id,
+    date: nextDate,
+    address: "",
+    project_no: "",
+    meters: null,
+    note: null,
+  });
   if (error) throw new Error(error.message);
 
   return nextDate;
 }
 
-// ---- Upsert day meta (project_no, meters, note) ----
+// ---- Upsert day meta (address, project_no, meters, note) ----
 export async function upsertDayMeta(data: {
   timesheet_id: string;
   date: string;
+  address: string;
   project_no: string;
   meters: number | null;
   note: string | null;
@@ -228,6 +245,7 @@ export async function upsertDayMeta(data: {
       timesheet_id: data.timesheet_id,
       user_id: user.id,
       date: data.date,
+      address: data.address,
       project_no: data.project_no,
       meters: data.meters,
       note: data.note,
@@ -337,4 +355,48 @@ export async function getLastUsedDefaults(): Promise<{
     .limit(1)
     .single();
   return data ?? null;
+}
+
+// ---- Update day date (change date of a day row) ----
+export async function updateDayDate(
+  timesheetId: string,
+  oldDate: string,
+  newDate: string
+): Promise<void> {
+  const supabase = await createClient();
+  const user = await requireUser(supabase);
+  await requireOwnDraftSheet(supabase, timesheetId, user.id);
+
+  // Update day meta
+  const { error: dayErr } = await supabase
+    .from("timesheet_days")
+    .update({ date: newDate })
+    .eq("timesheet_id", timesheetId)
+    .eq("date", oldDate);
+  if (dayErr) throw new Error(dayErr.message);
+
+  // Update entries
+  await supabase
+    .from("timesheet_entries")
+    .update({ date: newDate })
+    .eq("timesheet_id", timesheetId)
+    .eq("date", oldDate);
+}
+
+// ---- Delete a single machine entry from a day ----
+export async function deleteEntry(
+  timesheetId: string,
+  date: string,
+  machine: string
+): Promise<void> {
+  const supabase = await createClient();
+  const user = await requireUser(supabase);
+  await requireOwnDraftSheet(supabase, timesheetId, user.id);
+
+  await supabase
+    .from("timesheet_entries")
+    .delete()
+    .eq("timesheet_id", timesheetId)
+    .eq("date", date)
+    .eq("machine", machine);
 }

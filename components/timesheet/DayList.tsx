@@ -10,6 +10,8 @@ interface Props {
   onOpenMachine: (date: string, machine: string) => void;
   onCopyPrev: (date: string) => void;
   onDeleteDay: (date: string) => void;
+  onDeleteMachine: (date: string, machine: string) => void;
+  onDateChange: (oldDate: string, newDate: string) => void;
   onSaveStatus: (status: "idle" | "saving" | "saved" | "error") => void;
   onRowChange: (date: string, updated: Partial<DayRow>) => void;
 }
@@ -21,13 +23,15 @@ export default function DayList({
   onOpenMachine,
   onCopyPrev,
   onDeleteDay,
+  onDeleteMachine,
+  onDateChange,
   onSaveStatus,
   onRowChange,
 }: Props) {
   if (rows.length === 0) {
     return (
       <div className="px-4 py-8 text-center">
-        <p className="text-sm text-gray-400">Paina "Lisää päivä" alta.</p>
+        <p className="text-sm text-gray-400">Paina &quot;Lisää kohde&quot; alta.</p>
       </div>
     );
   }
@@ -44,6 +48,8 @@ export default function DayList({
           onOpenMachine={onOpenMachine}
           onCopyPrev={() => onCopyPrev(row.date)}
           onDeleteDay={() => onDeleteDay(row.date)}
+          onDeleteMachine={onDeleteMachine}
+          onDateChange={onDateChange}
           onSaveStatus={onSaveStatus}
           onRowChange={onRowChange}
         />

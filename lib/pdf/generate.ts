@@ -1,153 +1,243 @@
-import PDFDocument from "pdfkit";
+import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
+import { readFile } from "fs/promises";
+import path from "path";
 import type { TimesheetWithRows, DayRow } from "@/lib/types";
 
 function formatDate(iso: string): string {
-  return new Date(iso + "T00:00:00").toLocaleDateString("fi-FI");
+  const [y, m, d] = iso.split("-").map(Number);
+  return `${d}.${m}.${y}`;
+}
+
+function getWeekNumber(dateStr: string): number {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  date.setUTCDate(date.getUTCDate() + 4 - (date.getUTCDay() || 7));
+  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+  return Math.ceil(((date.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
 }
 
 export async function generateTimesheetPdf(
   ts: TimesheetWithRows,
   email: string
 ): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ margin: 40, size: "A4" });
-    const chunks: Buffer[] = [];
+  const pdf = await PDFDocument.create();
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const fontBold = await pdf.embedFont(StandardFonts.HelveticaBold);
 
-    doc.on("data", (c: Buffer) => chunks.push(c));
-    doc.on("end", () => resolve(Buffer.concat(chunks)));
-    doc.on("error", reject);
+  // Embed logo
+  let logoImage: Awaited<ReturnType<typeof pdf.embedJpg>> | null = null;
+  try {
+    const logoPath = path.join(process.cwd(), "public", "kmr-logo.jpg");
+    const logoBytes = await readFile(logoPath);
+    logoImage = await pdf.embedJpg(logoBytes);
+  } catch {
+    // Logo not found, continue without it
+  }
 
-    const W = doc.page.width - 80;
+  const pageW = 595.28; // A4
+  const pageH = 841.89;
+  const margin = 40;
+  const W = pageW - margin * 2;
 
-    // ── HEADER ──
-    doc
-      .fontSize(16)
-      .font("Helvetica-Bold")
-      .text("KMR INFRA OY", 40, 40, { align: "center", width: W });
+  let page = pdf.addPage([pageW, pageH]);
+  let y = pageH - margin;
 
-    doc.moveDown(0.3);
-    doc.fontSize(10).font("Helvetica");
-    doc.text(`Työntekijä: ${email}`, { align: "center", width: W });
-
-    if (ts.sent_at) {
-      doc.text(`Lähetetty: ${formatDate(ts.sent_at.split("T")[0])}`, {
-        align: "center",
-        width: W,
-      });
+  function ensureSpace(needed: number) {
+    if (y - needed < margin) {
+      page = pdf.addPage([pageW, pageH]);
+      y = pageH - margin;
     }
+  }
 
-    if (ts.address) {
-      doc.text(`Kohde: ${ts.address}`, { align: "center", width: W });
+  function drawText(
+    text: string,
+    x: number,
+    yPos: number,
+    size: number,
+    f = font,
+    color = rgb(0, 0, 0)
+  ) {
+    page.drawText(text, { x, y: yPos, size, font: f, color });
+  }
+
+  function textWidth(text: string, size: number, f = font) {
+    return f.widthOfTextAtSize(text, size);
+  }
+
+  // ── HEADER WITH LOGO ──
+  const logoH = 50;
+  const logoW = logoImage ? (logoImage.width / logoImage.height) * logoH : 0;
+
+  if (logoImage) {
+    page.drawImage(logoImage, {
+      x: margin,
+      y: y - logoH + 8,
+      width: logoW,
+      height: logoH,
+    });
+  }
+
+  // Company name + info right of logo
+  const textX = logoImage ? margin + logoW + 15 : margin;
+  drawText("KMR INFRA OY", textX, y - 4, 14, fontBold);
+  drawText(`Tyontekija: ${email}`, textX, y - 20, 9, font, rgb(0.3, 0.3, 0.3));
+
+  // Week number
+  const days = [...ts.rows].sort((a, b) => a.date.localeCompare(b.date));
+  let weekLabel = "";
+  if (days.length > 0) {
+    const firstWeek = getWeekNumber(days[0].date);
+    const lastWeek = getWeekNumber(days[days.length - 1].date);
+    weekLabel = firstWeek === lastWeek
+      ? `Viikko ${firstWeek}`
+      : `Viikot ${firstWeek}–${lastWeek}`;
+  }
+  if (weekLabel) {
+    const weekW = textWidth(weekLabel, 12, fontBold);
+    drawText(weekLabel, margin + W - weekW, y - 4, 12, fontBold);
+  }
+
+  // Date sent
+  if (ts.sent_at) {
+    const sentText = `Lahetetty: ${formatDate(ts.sent_at.split("T")[0])}`;
+    const sentW = textWidth(sentText, 8);
+    drawText(sentText, margin + W - sentW, y - 18, 8, font, rgb(0.4, 0.4, 0.4));
+  }
+
+  y -= logoH + 15;
+
+  // Separator line
+  page.drawLine({
+    start: { x: margin, y },
+    end: { x: margin + W, y },
+    thickness: 1.5,
+    color: rgb(0.15, 0.15, 0.15),
+  });
+  y -= 15;
+
+  // ── TABLE HEADER ──
+  const cols = [
+    { label: "Pvm", x: margin, w: 55 },
+    { label: "Kohde", x: margin + 55, w: 90 },
+    { label: "Projekti", x: margin + 145, w: 60 },
+    { label: "m", x: margin + 205, w: 30 },
+    { label: "Koneet + h", x: margin + 235, w: 190 },
+    { label: "Yht. h", x: margin + 425, w: 50 },
+  ];
+
+  function drawTableHeader() {
+    page.drawRectangle({
+      x: margin,
+      y: y - 12,
+      width: W,
+      height: 16,
+      color: rgb(0.15, 0.15, 0.15),
+    });
+    for (const col of cols) {
+      drawText(col.label, col.x + 2, y - 8, 8, fontBold, rgb(1, 1, 1));
     }
+    y -= 18;
+  }
 
-    doc.moveDown(1);
+  drawTableHeader();
 
-    // ── TABLE HEADER ──
-    const cols = {
-      date: { x: 40, w: 70 },
-      project: { x: 110, w: 70 },
-      meters: { x: 180, w: 45 },
-      machines: { x: 225, w: 220 },
-      sum: { x: 445, w: 70 },
-    };
+  // ── DATA ROWS ──
+  let totalHours = 0;
+  let totalMeters = 0;
 
-    const drawRow = (
-      y: number,
-      values: string[],
-      bold = false,
-      bg?: string
-    ) => {
-      const keys = Object.values(cols);
-      if (bg) {
-        doc.save().rect(40, y, W, 16).fill(bg).restore();
-      }
-      doc.font(bold ? "Helvetica-Bold" : "Helvetica").fontSize(8);
-      values.forEach((v, i) => {
-        doc.text(v, keys[i].x, y + 3, {
-          width: keys[i].w - 4,
-          ellipsis: true,
-          lineBreak: false,
-        });
-      });
-      doc
-        .moveTo(40, y)
-        .lineTo(40 + W, y)
-        .strokeColor("#cccccc")
-        .stroke();
-    };
+  days.forEach((day: DayRow, idx: number) => {
+    const machineStr = Object.entries(day.machines)
+      .filter(([, h]) => h && h > 0)
+      .map(([name, h]) => `${name} ${h}h`)
+      .join(", ");
 
-    let y = doc.y;
-    drawRow(
-      y,
-      ["Päivämäärä", "Projekti", "m", "Koneet + h", "Yht. h"],
-      true,
-      "#eeeeee"
+    const dayHours = Object.values(day.machines).reduce<number>(
+      (s, h) => s + (h ?? 0),
+      0
     );
-    y += 18;
+    totalHours += dayHours;
+    totalMeters += day.meters ?? 0;
 
-    const days = [...ts.rows].sort((a, b) => a.date.localeCompare(b.date));
-    let totalHours = 0;
+    ensureSpace(18);
 
-    days.forEach((day: DayRow, idx: number) => {
-      const machineStr = Object.entries(day.machines)
-        .filter(([, h]) => h && h > 0)
-        .map(([name, h]) => `${name} ${h}h`)
-        .join(", ");
+    // Alternating row bg
+    if (idx % 2 === 0) {
+      page.drawRectangle({
+        x: margin,
+        y: y - 12,
+        width: W,
+        height: 16,
+        color: rgb(0.97, 0.97, 0.97),
+      });
+    }
 
-      const dayHours: number = Object.values(day.machines).reduce<number>(
-        (s, h) => s + (h ?? 0),
-        0
-      );
-      totalHours += dayHours;
-
-      const bg = idx % 2 === 0 ? "#ffffff" : "#f9f9f9";
-      drawRow(
-        y,
-        [
-          formatDate(day.date),
-          day.project_no ?? "",
-          day.meters != null ? String(day.meters) : "",
-          machineStr,
-          dayHours > 0 ? `${dayHours}` : "",
-        ],
-        false,
-        bg
-      );
-
-      y += 18;
-
-      if (day.note) {
-        doc
-          .fontSize(7)
-          .font("Helvetica-Oblique")
-          .fillColor("#555555")
-          .text(`  Huomio: ${day.note}`, 44, y, { width: W - 10 });
-        doc.fillColor("#000000");
-        y += 14;
-      }
-
-      if (y > doc.page.height - 80) {
-        doc.addPage();
-        y = 40;
-      }
+    // Line above
+    page.drawLine({
+      start: { x: margin, y: y + 4 },
+      end: { x: margin + W, y: y + 4 },
+      thickness: 0.3,
+      color: rgb(0.85, 0.85, 0.85),
     });
 
-    // ── FOOTER LINE ──
-    doc
-      .moveTo(40, y)
-      .lineTo(40 + W, y)
-      .strokeColor("#000000")
-      .stroke();
-    y += 6;
+    const rowData = [
+      formatDate(day.date),
+      day.address || "",
+      day.project_no || "",
+      day.meters != null ? String(day.meters) : "",
+      machineStr,
+      dayHours > 0 ? String(dayHours) : "",
+    ];
 
-    doc
-      .fontSize(10)
-      .font("Helvetica-Bold")
-      .text(`Tunteja yhteensä: ${totalHours} h`, 40, y, {
-        align: "right",
-        width: W,
-      });
+    for (let i = 0; i < cols.length; i++) {
+      let text = rowData[i];
+      const maxW = cols[i].w - 4;
+      while (textWidth(text, 8) > maxW && text.length > 1) {
+        text = text.slice(0, -1);
+      }
+      drawText(text, cols[i].x + 2, y - 8, 8);
+    }
 
-    doc.end();
+    y -= 18;
   });
+
+  // ── FOOTER ──
+  ensureSpace(50);
+
+  // Top line
+  page.drawLine({
+    start: { x: margin, y: y + 4 },
+    end: { x: margin + W, y: y + 4 },
+    thickness: 1.5,
+    color: rgb(0.15, 0.15, 0.15),
+  });
+  y -= 6;
+
+  // Summary background
+  page.drawRectangle({
+    x: margin,
+    y: y - 28,
+    width: W,
+    height: 32,
+    color: rgb(0.96, 0.96, 0.96),
+  });
+
+  // Total hours (right)
+  const hoursText = `Tunnit yhteensa: ${totalHours} h`;
+  const hoursW = textWidth(hoursText, 11, fontBold);
+  drawText(hoursText, margin + W - hoursW - 4, y - 8, 11, fontBold);
+
+  // Total meters (left)
+  if (totalMeters > 0) {
+    const metersText = `Metrit yhteensa: ${totalMeters}`;
+    drawText(metersText, margin + 4, y - 8, 11, fontBold);
+  }
+
+  // Week info below
+  if (weekLabel) {
+    const weekInfoW = textWidth(weekLabel, 8);
+    drawText(weekLabel, margin + W - weekInfoW - 4, y - 22, 8, font, rgb(0.4, 0.4, 0.4));
+  }
+
+  const pdfBytes = await pdf.save();
+  return Buffer.from(pdfBytes);
 }

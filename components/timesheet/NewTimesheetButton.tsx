@@ -1,19 +1,23 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createTimesheet } from "@/lib/actions/timesheet";
 
 export default function NewTimesheetButton() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
+  const creating = useRef(false);
 
   async function handleCreate() {
+    if (creating.current) return;
+    creating.current = true;
     setLoading(true);
     try {
       const sheet = await createTimesheet({ address: "" });
       router.push(`/app/timesheet/${sheet.id}`);
-    } finally {
+    } catch {
+      creating.current = false;
       setLoading(false);
     }
   }
