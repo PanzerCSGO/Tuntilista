@@ -2,11 +2,11 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
+import Image from "next/image";
 
 export default function LoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -16,41 +16,43 @@ export default function LoginPage() {
     setError(null);
     setLoading(true);
 
-    const supabase = createClient();
-    const { error: authError } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+    try {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      });
 
-    if (authError) {
-      setError("Virheellinen sähköposti tai salasana.");
+      const data = await res.json();
+
+      if (!res.ok) {
+        setError(data.error || "Kirjautuminen epäonnistui.");
+        setLoading(false);
+        return;
+      }
+
+      router.push("/app");
+      router.refresh();
+    } catch {
+      setError("Verkkovirhe. Yritä uudelleen.");
       setLoading(false);
-      return;
     }
-
-    router.push("/app");
-    router.refresh();
   }
 
   return (
-    <main className="min-h-screen flex items-center justify-center px-4 bg-gray-50">
+    <main className="min-h-screen flex flex-col items-center justify-center px-4 bg-gray-50">
       <div className="w-full max-w-sm">
         {/* Logo / header */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-orange-500 mb-4">
-            <svg
-              className="w-7 h-7 text-white"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={2}
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z"
-              />
-            </svg>
+          <div className="inline-flex items-center justify-center mb-4">
+            <Image
+              src="/kmr-logo.jpg"
+              alt="KMR Infra Oy"
+              width={80}
+              height={80}
+              className="rounded-2xl"
+              priority
+            />
           </div>
           <h1 className="text-2xl font-bold text-gray-900">Tuntilista</h1>
           <p className="text-sm text-gray-500 mt-1">Kirjaudu sisään</p>
@@ -60,20 +62,20 @@ export default function LoginPage() {
           <form onSubmit={handleLogin} className="space-y-4">
             <div>
               <label
-                htmlFor="email"
+                htmlFor="username"
                 className="block text-sm font-medium text-gray-700 mb-1.5"
               >
-                Sähköposti
+                Käyttäjänimi
               </label>
               <input
-                id="email"
-                type="email"
+                id="username"
+                type="text"
                 required
-                autoComplete="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                autoComplete="username"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
                 className="w-full px-3.5 py-2.5 rounded-xl border border-gray-200 bg-gray-50 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent transition"
-                placeholder="sinä@esimerkki.fi"
+                placeholder="esim. kmr-matti"
               />
             </div>
 
@@ -112,6 +114,9 @@ export default function LoginPage() {
           </form>
         </div>
       </div>
+
+      {/* Easter egg */}
+      <p className="mt-8 text-[10px] text-gray-300 select-none">#05</p>
     </main>
   );
 }
