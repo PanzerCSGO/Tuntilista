@@ -19,5 +19,15 @@ export default async function TimesheetPage({ params }: Props) {
   const sheet = await getTimesheetWithRows(id);
   if (!sheet) notFound();
 
-  return <TimesheetCard sheet={sheet} userEmail={user.email ?? ""} />;
+  // Get display name from profiles
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("username")
+    .eq("id", user.id)
+    .single();
+
+  const workerName =
+    user.user_metadata?.full_name || profile?.username || user.email || "";
+
+  return <TimesheetCard sheet={sheet} workerName={workerName} />;
 }

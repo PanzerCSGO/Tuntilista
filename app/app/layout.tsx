@@ -15,6 +15,16 @@ export default async function AppLayout({
 
   if (!user) redirect("/login");
 
+  // Get display name from profiles
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("username")
+    .eq("id", user.id)
+    .single();
+
+  const displayName =
+    user.user_metadata?.full_name || profile?.username || user.email || "";
+
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="sticky top-0 z-10" style={{ backgroundColor: "#1a1a1a" }}>
@@ -35,7 +45,7 @@ export default async function AppLayout({
           {/* Right side */}
           <div className="flex items-center gap-3">
             <span className="hidden sm:block text-xs text-gray-400 truncate max-w-[180px]">
-              {user.email}
+              {displayName}
             </span>
             <LogoutButton />
           </div>

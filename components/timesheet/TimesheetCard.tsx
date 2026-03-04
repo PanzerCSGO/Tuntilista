@@ -16,12 +16,12 @@ import MachineModal from "./MachineModal";
 
 interface Props {
   sheet: TimesheetWithRows;
-  userEmail: string;
+  workerName: string;
 }
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
 
-export default function TimesheetCard({ sheet, userEmail }: Props) {
+export default function TimesheetCard({ sheet, workerName }: Props) {
   const router = useRouter();
 
   const [rows, setRows] = useState<DayRow[]>(sheet.rows);
@@ -263,7 +263,7 @@ export default function TimesheetCard({ sheet, userEmail }: Props) {
               Työntekijä
             </label>
             <div className="text-sm text-gray-600 border-b border-gray-100 pb-1">
-              {userEmail}
+              {workerName}
             </div>
           </div>
         </div>

@@ -19,7 +19,20 @@ export async function sendTimesheet(timesheetId: string) {
   if (ts.user_id !== user.id) throw new Error("Ei oikeus lähettää tätä lappua");
   if (ts.status === "sent") throw new Error("Lappu on jo lähetetty");
 
-  const pdfBytes = await generateTimesheetPdf(ts, user.email ?? "");
+  // Get worker's display name from profiles
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("username")
+    .eq("id", user.id)
+    .single();
+
+  const workerName =
+    user.user_metadata?.full_name ||
+    profile?.username ||
+    user.email ||
+    "";
+
+  const pdfBytes = await generateTimesheetPdf(ts, workerName);
 
   // TODO: poista override kun domain on verifioitu
   const recipientOverride = process.env.EMAIL_TO_OVERRIDE;
@@ -27,6 +40,8 @@ export async function sendTimesheet(timesheetId: string) {
     to: recipientOverride || user.email || "",
     pdfBytes,
     timesheetId,
+    workerName,
+    weekLabel: ts.rows.length > 0 ? getWeekLabel(ts.rows) : "",
   });
 
   await markTimesheetSent(timesheetId);
@@ -34,4 +49,19 @@ export async function sendTimesheet(timesheetId: string) {
   revalidatePath(`/app/timesheet/${timesheetId}`);
   revalidatePath("/app");
   return { success: true };
+}
+
+function getWeekNumber(dateStr: string): number {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  date.setUTCDate(date.getUTCDate() + 4 - (date.getUTCDay() || 7));
+  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+  return Math.ceil(((date.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
+}
+
+function getWeekLabel(rows: { date: string }[]): string {
+  const sorted = [...rows].sort((a, b) => a.date.localeCompare(b.date));
+  const first = getWeekNumber(sorted[0].date);
+  const last = getWeekNumber(sorted[sorted.length - 1].date);
+  return first === last ? String(first) : `${first}–${last}`;
 }

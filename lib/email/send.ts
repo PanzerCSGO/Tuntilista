@@ -6,18 +6,24 @@ interface SendParams {
   to: string;
   pdfBytes: Buffer;
   timesheetId: string;
+  workerName: string;
+  weekLabel: string;
 }
 
 export async function sendTimesheetEmail({
   to,
   pdfBytes,
   timesheetId,
+  workerName,
+  weekLabel,
 }: SendParams) {
+  const weekText = weekLabel ? ` viikolta ${weekLabel}` : "";
+
   const { error } = await resend.emails.send({
     from: process.env.EMAIL_FROM ?? "noreply@kmrinfra.fi",
     to,
-    subject: `KMR Infra — Tuntilista ${new Date().toLocaleDateString("fi-FI")}`,
-    text: `Hei,\n\nLiitteenä tuntilistasi (ID: ${timesheetId}).\n\nKMR Infra Oy`,
+    subject: `KMR Infra — Tuntilista${weekText}`,
+    text: `Hei,\n\nLiitteenä ${workerName} tuntilista${weekText}.\n\nKMR Infra Oy`,
     attachments: [
       {
         filename: `tuntilista-${timesheetId}.pdf`,

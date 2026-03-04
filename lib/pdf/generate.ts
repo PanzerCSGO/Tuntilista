@@ -18,7 +18,7 @@ function getWeekNumber(dateStr: string): number {
 
 export async function generateTimesheetPdf(
   ts: TimesheetWithRows,
-  email: string
+  workerName: string
 ): Promise<Buffer> {
   const pdf = await PDFDocument.create();
   const font = await pdf.embedFont(StandardFonts.Helvetica);
@@ -77,10 +77,10 @@ export async function generateTimesheetPdf(
     });
   }
 
-  // Company name + info right of logo
+  // Company name + worker name right of logo
   const textX = logoImage ? margin + logoW + 15 : margin;
   drawText("KMR INFRA OY", textX, y - 4, 14, fontBold);
-  drawText(`Tyontekija: ${email}`, textX, y - 20, 9, font, rgb(0.3, 0.3, 0.3));
+  drawText(`Ty\u00F6ntekij\u00E4: ${workerName}`, textX, y - 20, 9, font, rgb(0.3, 0.3, 0.3));
 
   // Week number
   const days = [...ts.rows].sort((a, b) => a.date.localeCompare(b.date));
@@ -90,7 +90,7 @@ export async function generateTimesheetPdf(
     const lastWeek = getWeekNumber(days[days.length - 1].date);
     weekLabel = firstWeek === lastWeek
       ? `Viikko ${firstWeek}`
-      : `Viikot ${firstWeek}–${lastWeek}`;
+      : `Viikot ${firstWeek}\u2013${lastWeek}`;
   }
   if (weekLabel) {
     const weekW = textWidth(weekLabel, 12, fontBold);
@@ -99,7 +99,7 @@ export async function generateTimesheetPdf(
 
   // Date sent
   if (ts.sent_at) {
-    const sentText = `Lahetetty: ${formatDate(ts.sent_at.split("T")[0])}`;
+    const sentText = `L\u00E4hetetty: ${formatDate(ts.sent_at.split("T")[0])}`;
     const sentW = textWidth(sentText, 8);
     drawText(sentText, margin + W - sentW, y - 18, 8, font, rgb(0.4, 0.4, 0.4));
   }
@@ -215,27 +215,21 @@ export async function generateTimesheetPdf(
   // Summary background
   page.drawRectangle({
     x: margin,
-    y: y - 28,
+    y: y - 20,
     width: W,
-    height: 32,
+    height: 24,
     color: rgb(0.96, 0.96, 0.96),
   });
 
   // Total hours (right)
-  const hoursText = `Tunnit yhteensa: ${totalHours} h`;
+  const hoursText = `Tunnit yhteens\u00E4: ${totalHours} h`;
   const hoursW = textWidth(hoursText, 11, fontBold);
   drawText(hoursText, margin + W - hoursW - 4, y - 8, 11, fontBold);
 
   // Total meters (left)
   if (totalMeters > 0) {
-    const metersText = `Metrit yhteensa: ${totalMeters}`;
+    const metersText = `Metrit yhteens\u00E4: ${totalMeters}`;
     drawText(metersText, margin + 4, y - 8, 11, fontBold);
-  }
-
-  // Week info below
-  if (weekLabel) {
-    const weekInfoW = textWidth(weekLabel, 8);
-    drawText(weekLabel, margin + W - weekInfoW - 4, y - 22, 8, font, rgb(0.4, 0.4, 0.4));
   }
 
   const pdfBytes = await pdf.save();
