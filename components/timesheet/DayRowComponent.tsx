@@ -10,13 +10,13 @@ interface Props {
   canCopyPrev: boolean;
   timesheetId: string;
   locked: boolean;
-  onOpenMachine: (date: string, machine: string) => void;
+  onOpenMachine: (dayId: string, date: string, machine: string) => void;
   onCopyPrev: () => void;
   onDeleteDay: () => void;
-  onDeleteMachine: (date: string, machine: string) => void;
-  onDateChange: (oldDate: string, newDate: string) => void;
+  onDeleteMachine: (dayId: string, machine: string) => void;
+  onDateChange: (dayId: string, newDate: string) => void;
   onSaveStatus: (status: "idle" | "saving" | "saved" | "error") => void;
-  onRowChange: (date: string, updated: Partial<DayRow>) => void;
+  onRowChange: (dayId: string, updated: Partial<DayRow>) => void;
 }
 
 export default function DayRowComponent({
@@ -43,6 +43,7 @@ export default function DayRowComponent({
       debounceRef.current = setTimeout(async () => {
         try {
           await upsertDayMeta({
+            day_id: row.day_id,
             timesheet_id: timesheetId,
             date: row.date,
             address: fields.address,
@@ -57,7 +58,7 @@ export default function DayRowComponent({
         }
       }, 600);
     },
-    [timesheetId, row.date, locked, onSaveStatus]
+    [timesheetId, row.day_id, row.date, locked, onSaveStatus]
   );
 
   function handleFieldChange(field: "address" | "project_no" | "meters" | "note", raw: string) {
@@ -68,24 +69,24 @@ export default function DayRowComponent({
     switch (field) {
       case "address":
         updated = { address: raw };
-        onRowChange(row.date, updated);
+        onRowChange(row.day_id, updated);
         scheduleMetaSave({ address: raw, project_no: row.project_no, meters: row.meters, note: row.note });
         break;
       case "project_no":
         updated = { project_no: raw };
-        onRowChange(row.date, updated);
+        onRowChange(row.day_id, updated);
         scheduleMetaSave({ address: row.address, project_no: raw, meters: row.meters, note: row.note });
         break;
       case "meters":
         metersVal = raw === "" ? null : parseFloat(raw);
         if (raw !== "" && isNaN(metersVal!)) return;
         updated = { meters: metersVal };
-        onRowChange(row.date, updated);
+        onRowChange(row.day_id, updated);
         scheduleMetaSave({ address: row.address, project_no: row.project_no, meters: metersVal, note: row.note });
         break;
       case "note":
         updated = { note: raw || null };
-        onRowChange(row.date, updated);
+        onRowChange(row.day_id, updated);
         scheduleMetaSave({ address: row.address, project_no: row.project_no, meters: row.meters, note: raw || null });
         break;
     }
@@ -119,7 +120,7 @@ export default function DayRowComponent({
               onChange={(e) => {
                 const newDate = e.target.value;
                 if (newDate && newDate !== row.date) {
-                  onDateChange(row.date, newDate);
+                  onDateChange(row.day_id, newDate);
                 }
               }}
               className="text-sm font-semibold text-gray-800 bg-transparent border-b border-gray-200 focus:border-orange-400 focus:outline-none cursor-pointer"
@@ -188,7 +189,7 @@ export default function DayRowComponent({
           <div key={machine} className="inline-flex items-center gap-0.5">
             <button
               type="button"
-              onClick={() => !locked && onOpenMachine(row.date, machine)}
+              onClick={() => !locked && onOpenMachine(row.day_id, row.date, machine)}
               disabled={locked}
               className="inline-flex items-center gap-1 px-2 py-1 rounded-l-lg bg-orange-50 text-orange-700 text-xs font-medium border border-orange-100 disabled:opacity-60 disabled:cursor-not-allowed hover:bg-orange-100 transition-colors"
             >
@@ -198,7 +199,7 @@ export default function DayRowComponent({
             {!locked && (
               <button
                 type="button"
-                onClick={() => onDeleteMachine(row.date, machine)}
+                onClick={() => onDeleteMachine(row.day_id, machine)}
                 className="inline-flex items-center px-1.5 py-1 rounded-r-lg bg-orange-50 text-orange-300 text-xs border border-l-0 border-orange-100 hover:bg-red-50 hover:text-red-500 transition-colors"
                 title="Poista kone"
               >
@@ -239,7 +240,7 @@ export default function DayRowComponent({
                         type="button"
                         onClick={() => {
                           setShowMachineSelect(false);
-                          onOpenMachine(row.date, machine);
+                          onOpenMachine(row.day_id, row.date, machine);
                         }}
                         className="w-full text-left px-3 py-2 text-xs text-gray-700 hover:bg-orange-50 hover:text-orange-700 transition-colors"
                       >

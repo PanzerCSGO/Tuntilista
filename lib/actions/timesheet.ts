@@ -81,7 +81,8 @@ export async function getTimesheetWithRows(
   const rowMap = new Map<string, DayRow>();
 
   for (const d of (days ?? []) as TimesheetDay[]) {
-    rowMap.set(d.date, {
+    rowMap.set(d.id, {
+      day_id: d.id,
       date: d.date,
       address: (d as TimesheetDay & { address?: string }).address ?? "",
       project_no: d.project_no ?? "",
@@ -91,18 +92,39 @@ export async function getTimesheetWithRows(
     });
   }
 
-  for (const e of (entries ?? []) as TimesheetEntry[]) {
-    if (!rowMap.has(e.date)) {
-      rowMap.set(e.date, {
-        date: e.date,
-        address: "",
-        project_no: "",
-        meters: null,
-        note: null,
-        machines: {},
-      });
+  for (const e of (entries ?? []) as (TimesheetEntry & { day_id?: string })[]) {
+    // Try to match by day_id first, then fall back to date (for old data)
+    let targetId: string | undefined;
+    if (e.day_id && rowMap.has(e.day_id)) {
+      targetId = e.day_id;
+    } else {
+      // Fallback: find a day row with matching date
+      for (const [id, row] of rowMap) {
+        if (row.date === e.date) {
+          targetId = id;
+          break;
+        }
+      }
     }
-    const row = rowMap.get(e.date)!;
+
+    if (!targetId) {
+      // Create a placeholder row
+      const placeholderId = `placeholder-${e.date}`;
+      if (!rowMap.has(placeholderId)) {
+        rowMap.set(placeholderId, {
+          day_id: placeholderId,
+          date: e.date,
+          address: "",
+          project_no: "",
+          meters: null,
+          note: null,
+          machines: {},
+        });
+      }
+      targetId = placeholderId;
+    }
+
+    const row = rowMap.get(targetId)!;
     if (e.hours > 0 && e.machine !== "_empty") {
       row.machines[e.machine] = e.hours;
     }
@@ -187,7 +209,7 @@ function todayDateStr(): string {
 }
 
 // ---- Add a new day ----
-export async function addDay(timesheetId: string): Promise<string> {
+export async function addDay(timesheetId: string): Promise<{ dayId: string; date: string }> {
   const supabase = await createClient();
   const user = await requireUser(supabase);
   await requireOwnDraftSheet(supabase, timesheetId, user.id);
@@ -198,22 +220,14 @@ export async function addDay(timesheetId: string): Promise<string> {
     .eq("timesheet_id", timesheetId)
     .order("date", { ascending: false });
 
-  const existingDates = new Set((existingDays ?? []).map((d) => d.date));
-
   let nextDate: string;
   if (existingDays && existingDays.length > 0) {
     nextDate = addDaysToDateStr(existingDays[0].date, 1);
-    // Skip dates that already exist (max 365 to prevent infinite loop)
-    let safety = 0;
-    while (existingDates.has(nextDate) && safety < 365) {
-      nextDate = addDaysToDateStr(nextDate, 1);
-      safety++;
-    }
   } else {
     nextDate = todayDateStr();
   }
 
-  const { error } = await supabase.from("timesheet_days").insert({
+  const { data: newDay, error } = await supabase.from("timesheet_days").insert({
     timesheet_id: timesheetId,
     user_id: user.id,
     date: nextDate,
@@ -221,14 +235,15 @@ export async function addDay(timesheetId: string): Promise<string> {
     project_no: "",
     meters: null,
     note: null,
-  });
+  }).select("id, date").single();
   if (error) throw new Error(error.message);
 
-  return nextDate;
+  return { dayId: newDay.id, date: newDay.date };
 }
 
-// ---- Upsert day meta (address, project_no, meters, note) ----
+// ---- Upsert day meta (address, project_no, meters, note) by day_id ----
 export async function upsertDayMeta(data: {
+  day_id: string;
   timesheet_id: string;
   date: string;
   address: string;
@@ -240,24 +255,23 @@ export async function upsertDayMeta(data: {
   const user = await requireUser(supabase);
   await requireOwnDraftSheet(supabase, data.timesheet_id, user.id);
 
-  const { error } = await supabase.from("timesheet_days").upsert(
-    {
-      timesheet_id: data.timesheet_id,
-      user_id: user.id,
-      date: data.date,
+  const { error } = await supabase
+    .from("timesheet_days")
+    .update({
       address: data.address,
       project_no: data.project_no,
       meters: data.meters,
       note: data.note,
-    },
-    { onConflict: "timesheet_id,date" }
-  );
+    })
+    .eq("id", data.day_id)
+    .eq("user_id", user.id);
   if (error) throw new Error(error.message);
 }
 
-// ---- Upsert machine hours ----
+// ---- Upsert machine hours (linked to day_id) ----
 export async function upsertEntry(data: {
   timesheet_id: string;
+  day_id: string;
   date: string;
   machine: string;
   hours: number;
@@ -270,46 +284,57 @@ export async function upsertEntry(data: {
     await supabase
       .from("timesheet_entries")
       .delete()
-      .eq("timesheet_id", data.timesheet_id)
-      .eq("date", data.date)
+      .eq("day_id", data.day_id)
       .eq("machine", data.machine);
     return;
   }
 
-  const { error } = await supabase.from("timesheet_entries").upsert(
-    {
+  // Try update first, insert if not found
+  const { data: existing } = await supabase
+    .from("timesheet_entries")
+    .select("id")
+    .eq("day_id", data.day_id)
+    .eq("machine", data.machine)
+    .maybeSingle();
+
+  if (existing) {
+    const { error } = await supabase
+      .from("timesheet_entries")
+      .update({ hours: data.hours })
+      .eq("id", existing.id);
+    if (error) throw new Error(error.message);
+  } else {
+    const { error } = await supabase.from("timesheet_entries").insert({
       timesheet_id: data.timesheet_id,
       user_id: user.id,
       date: data.date,
+      day_id: data.day_id,
       machine: data.machine,
       hours: data.hours,
-    },
-    { onConflict: "timesheet_id,date,machine" }
-  );
-  if (error) throw new Error(error.message);
+    });
+    if (error) throw new Error(error.message);
+  }
 }
 
-// ---- Delete a full day (days + entries) ----
+// ---- Delete a full day (days + entries) by day_id ----
 export async function deleteDayRow(
   timesheet_id: string,
-  date: string
+  day_id: string
 ): Promise<void> {
   const supabase = await createClient();
   const user = await requireUser(supabase);
   await requireOwnDraftSheet(supabase, timesheet_id, user.id);
 
-  await Promise.all([
-    supabase
-      .from("timesheet_days")
-      .delete()
-      .eq("timesheet_id", timesheet_id)
-      .eq("date", date),
-    supabase
-      .from("timesheet_entries")
-      .delete()
-      .eq("timesheet_id", timesheet_id)
-      .eq("date", date),
-  ]);
+  // Entries with day_id cascade on delete, but also clean up any without day_id
+  await supabase
+    .from("timesheet_entries")
+    .delete()
+    .eq("day_id", day_id);
+
+  await supabase
+    .from("timesheet_days")
+    .delete()
+    .eq("id", day_id);
 }
 
 // ---- Mark timesheet as sent ----
@@ -357,10 +382,10 @@ export async function getLastUsedDefaults(): Promise<{
   return data ?? null;
 }
 
-// ---- Update day date (change date of a day row) ----
+// ---- Update day date ----
 export async function updateDayDate(
   timesheetId: string,
-  oldDate: string,
+  dayId: string,
   newDate: string
 ): Promise<void> {
   const supabase = await createClient();
@@ -371,22 +396,20 @@ export async function updateDayDate(
   const { error: dayErr } = await supabase
     .from("timesheet_days")
     .update({ date: newDate })
-    .eq("timesheet_id", timesheetId)
-    .eq("date", oldDate);
+    .eq("id", dayId);
   if (dayErr) throw new Error(dayErr.message);
 
-  // Update entries
+  // Update entries that reference this day
   await supabase
     .from("timesheet_entries")
     .update({ date: newDate })
-    .eq("timesheet_id", timesheetId)
-    .eq("date", oldDate);
+    .eq("day_id", dayId);
 }
 
-// ---- Delete a single machine entry from a day ----
+// ---- Delete a single machine entry by day_id ----
 export async function deleteEntry(
   timesheetId: string,
-  date: string,
+  dayId: string,
   machine: string
 ): Promise<void> {
   const supabase = await createClient();
@@ -396,7 +419,6 @@ export async function deleteEntry(
   await supabase
     .from("timesheet_entries")
     .delete()
-    .eq("timesheet_id", timesheetId)
-    .eq("date", date)
+    .eq("day_id", dayId)
     .eq("machine", machine);
 }

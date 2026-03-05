@@ -117,12 +117,12 @@ export async function generateTimesheetPdf(
 
   // ── TABLE HEADER ──
   const cols = [
-    { label: "Pvm", x: margin, w: 55 },
-    { label: "Kohde", x: margin + 55, w: 90 },
-    { label: "Projekti", x: margin + 145, w: 60 },
-    { label: "m", x: margin + 205, w: 30 },
-    { label: "Koneet + h", x: margin + 235, w: 190 },
-    { label: "Yht. h", x: margin + 425, w: 50 },
+    { label: "PVM", x: margin, w: 55 },
+    { label: "KOHDE", x: margin + 55, w: 90 },
+    { label: "PROJEKTI NRO", x: margin + 145, w: 65 },
+    { label: "KAIVUU METRIT", x: margin + 210, w: 65 },
+    { label: "TY\u00D6TUNNIT", x: margin + 275, w: 150 },
+    { label: "TUNNIT YHT.", x: margin + 425, w: 50 },
   ];
 
   function drawTableHeader() {

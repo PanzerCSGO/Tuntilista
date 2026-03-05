@@ -31,6 +31,7 @@ export default function TimesheetCard({ sheet, workerName }: Props) {
   const [sendError, setSendError] = useState<string | null>(null);
   const [locked, setLocked] = useState(sheet.status === "sent");
   const [modal, setModal] = useState<{
+    dayId: string;
     date: string;
     machine: string;
     currentHours: number;
@@ -45,27 +46,20 @@ export default function TimesheetCard({ sheet, workerName }: Props) {
   );
 
   const saveCell = useCallback(
-    async (date: string, machine: string, hours: number) => {
+    async (dayId: string, date: string, machine: string, hours: number) => {
       if (locked) return;
       setSaveStatus("saving");
-      setRows((prev) => {
-        const existing = prev.find((r) => r.date === date);
-        if (existing) {
-          return prev.map((r) => {
-            if (r.date !== date) return r;
-            const machines = { ...r.machines };
-            if (hours === 0) delete machines[machine];
-            else machines[machine] = hours;
-            return { ...r, machines };
-          });
-        }
-        return [
-          ...prev,
-          { date, address: "", project_no: "", meters: null, note: null, machines: hours > 0 ? { [machine]: hours } : {} },
-        ].sort((a, b) => a.date.localeCompare(b.date));
-      });
+      setRows((prev) =>
+        prev.map((r) => {
+          if (r.day_id !== dayId) return r;
+          const machines = { ...r.machines };
+          if (hours === 0) delete machines[machine];
+          else machines[machine] = hours;
+          return { ...r, machines };
+        })
+      );
       try {
-        await upsertEntry({ timesheet_id: sheet.id, date, machine, hours });
+        await upsertEntry({ timesheet_id: sheet.id, day_id: dayId, date, machine, hours });
         setSaveStatus("saved");
         setTimeout(() => setSaveStatus("idle"), 2000);
       } catch {
@@ -75,9 +69,9 @@ export default function TimesheetCard({ sheet, workerName }: Props) {
     [sheet.id, locked]
   );
 
-  const handleRowChange = useCallback((date: string, updated: Partial<DayRow>) => {
+  const handleRowChange = useCallback((dayId: string, updated: Partial<DayRow>) => {
     setRows((prev) =>
-      prev.map((r) => (r.date === date ? { ...r, ...updated } : r))
+      prev.map((r) => (r.day_id === dayId ? { ...r, ...updated } : r))
     );
   }, []);
 
@@ -86,14 +80,11 @@ export default function TimesheetCard({ sheet, workerName }: Props) {
     setAddingDay(true);
     setSaveStatus("saving");
     try {
-      const newDate = await addDay(sheet.id);
-      setRows((prev) => {
-        if (prev.find((r) => r.date === newDate)) return prev;
-        return [
-          ...prev,
-          { date: newDate, address: "", project_no: "", meters: null, note: null, machines: {} },
-        ].sort((a, b) => a.date.localeCompare(b.date));
-      });
+      const { dayId, date } = await addDay(sheet.id);
+      setRows((prev) => [
+        ...prev,
+        { day_id: dayId, date, address: "", project_no: "", meters: null, note: null, machines: {} },
+      ].sort((a, b) => a.date.localeCompare(b.date)));
       setSaveStatus("saved");
       setTimeout(() => setSaveStatus("idle"), 2000);
       setTimeout(() => {
@@ -107,36 +98,37 @@ export default function TimesheetCard({ sheet, workerName }: Props) {
     }
   }
 
-  function copyPrevDay(targetDate: string) {
+  function copyPrevDay(dayId: string) {
     if (locked) return;
-    const idx = rows.findIndex((r) => r.date === targetDate);
+    const idx = rows.findIndex((r) => r.day_id === dayId);
     if (idx <= 0) return;
     const prev = rows[idx - 1];
     setRows((prevRows) =>
       prevRows.map((r) =>
-        r.date === targetDate
+        r.day_id === dayId
           ? { ...r, address: prev.address, project_no: prev.project_no, machines: { ...prev.machines } }
           : r
       )
     );
+    const target = rows[idx];
     Object.entries(prev.machines).forEach(([machine, hours]) => {
-      saveCell(targetDate, machine, hours ?? 0);
+      saveCell(dayId, target.date, machine, hours ?? 0);
     });
   }
 
-  async function handleDeleteDay(date: string) {
+  async function handleDeleteDay(dayId: string) {
     if (locked) return;
-    setRows((prev) => prev.filter((r) => r.date !== date));
-    await deleteDayRow(sheet.id, date);
+    setRows((prev) => prev.filter((r) => r.day_id !== dayId));
+    await deleteDayRow(sheet.id, dayId);
     setSaveStatus("saved");
     setTimeout(() => setSaveStatus("idle"), 1500);
   }
 
-  async function handleDeleteMachine(date: string, machine: string) {
+  async function handleDeleteMachine(dayId: string, machine: string) {
     if (locked) return;
     setRows((prev) =>
       prev.map((r) => {
-        if (r.date !== date) return r;
+        if (r.day_id !== dayId) return r;
         const machines = { ...r.machines };
         delete machines[machine];
         return { ...r, machines };
@@ -144,7 +136,7 @@ export default function TimesheetCard({ sheet, workerName }: Props) {
     );
     setSaveStatus("saving");
     try {
-      await deleteEntry(sheet.id, date, machine);
+      await deleteEntry(sheet.id, dayId, machine);
       setSaveStatus("saved");
       setTimeout(() => setSaveStatus("idle"), 1500);
     } catch {
@@ -152,18 +144,16 @@ export default function TimesheetCard({ sheet, workerName }: Props) {
     }
   }
 
-  async function handleDateChange(oldDate: string, newDate: string) {
+  async function handleDateChange(dayId: string, newDate: string) {
     if (locked) return;
-    // Check for duplicate date
-    if (rows.some((r) => r.date === newDate)) return;
     setRows((prev) =>
       prev
-        .map((r) => (r.date === oldDate ? { ...r, date: newDate } : r))
+        .map((r) => (r.day_id === dayId ? { ...r, date: newDate } : r))
         .sort((a, b) => a.date.localeCompare(b.date))
     );
     setSaveStatus("saving");
     try {
-      await updateDayDate(sheet.id, oldDate, newDate);
+      await updateDayDate(sheet.id, dayId, newDate);
       setSaveStatus("saved");
       setTimeout(() => setSaveStatus("idle"), 2000);
     } catch {
@@ -171,20 +161,15 @@ export default function TimesheetCard({ sheet, workerName }: Props) {
     }
   }
 
-  function openModal(date: string, machine: string) {
+  function openModal(dayId: string, date: string, machine: string) {
     if (locked) return;
-    if (!machine) {
-      // This shouldn't happen anymore since we use dropdown, but fallback
-      setModal({ date, machine: "", currentHours: 0 });
-    } else {
-      const row = rows.find((r) => r.date === date);
-      setModal({ date, machine, currentHours: row?.machines[machine] ?? 0 });
-    }
+    const row = rows.find((r) => r.day_id === dayId);
+    setModal({ dayId, date, machine, currentHours: row?.machines[machine] ?? 0 });
   }
 
   function handleModalSave(hours: number) {
     if (!modal) return;
-    saveCell(modal.date, modal.machine, hours);
+    saveCell(modal.dayId, modal.date, modal.machine, hours);
     setModal(null);
   }
 
@@ -286,7 +271,7 @@ export default function TimesheetCard({ sheet, workerName }: Props) {
           ) : (
             rows.map((row, idx) => (
               <div
-                key={row.date}
+                key={row.day_id}
                 ref={idx === rows.length - 1 ? newDayRef : null}
               >
                 <DayRowComponent
@@ -294,9 +279,9 @@ export default function TimesheetCard({ sheet, workerName }: Props) {
                   canCopyPrev={idx > 0}
                   timesheetId={sheet.id}
                   locked={locked}
-                  onOpenMachine={openModal}
-                  onCopyPrev={() => copyPrevDay(row.date)}
-                  onDeleteDay={() => handleDeleteDay(row.date)}
+                  onOpenMachine={(dayId, date, machine) => openModal(dayId, date, machine)}
+                  onCopyPrev={() => copyPrevDay(row.day_id)}
+                  onDeleteDay={() => handleDeleteDay(row.day_id)}
                   onDeleteMachine={handleDeleteMachine}
                   onDateChange={handleDateChange}
                   onSaveStatus={setSaveStatus}

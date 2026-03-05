@@ -29,8 +29,8 @@ export function AddDayButton({ timesheetId, copyFrom, onAdded }: Props) {
     setError(null);
     try {
       // Seuraava päivä kalenteripäivillä
-      const newDate = await addDay(timesheetId);
-      onAdded({ id: crypto.randomUUID(), date: newDate, project_no: copyFrom?.project_no ?? null, address: copyFrom?.address ?? null, machine_entries: [] });
+      const { dayId, date: newDate } = await addDay(timesheetId);
+      onAdded({ id: dayId, date: newDate, project_no: copyFrom?.project_no ?? null, address: copyFrom?.address ?? null, machine_entries: [] });
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Virhe");
     } finally {
