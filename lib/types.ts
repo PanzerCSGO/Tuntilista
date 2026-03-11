@@ -22,6 +22,7 @@ export const MACHINES = [
   "Iveco",
   "Man",
   "Pulla-auto",
+  "Tunkkaus",
 ] as const;
 export type Machine = (typeof MACHINES)[number];
 
@@ -59,6 +60,7 @@ export type TimesheetDay = {
   date: string;
   project_no: string;
   meters: number | null;
+  tunkkaus_meters: number | null;
   note: string | null;
   created_at: string;
   updated_at: string;
@@ -72,6 +74,7 @@ export type DayRow = {
   project_no: string;
   meters: number | null;
   note: string | null;
+  tunkkaus_meters: number | null;
   machines: Partial<Record<string, number>>;
 };
 

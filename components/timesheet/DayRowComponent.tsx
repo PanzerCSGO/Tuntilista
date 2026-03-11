@@ -36,7 +36,7 @@ export default function DayRowComponent({
   const [showMachineSelect, setShowMachineSelect] = useState(false);
 
   const scheduleMetaSave = useCallback(
-    (fields: { address: string; project_no: string; meters: number | null; note: string | null }) => {
+    (fields: { address: string; project_no: string; meters: number | null; tunkkaus_meters: number | null; note: string | null }) => {
       if (locked) return;
       if (debounceRef.current) clearTimeout(debounceRef.current);
       onSaveStatus("saving");
@@ -49,6 +49,7 @@ export default function DayRowComponent({
             address: fields.address,
             project_no: fields.project_no,
             meters: fields.meters,
+            tunkkaus_meters: fields.tunkkaus_meters,
             note: fields.note,
           });
           onSaveStatus("saved");
@@ -61,33 +62,42 @@ export default function DayRowComponent({
     [timesheetId, row.day_id, row.date, locked, onSaveStatus]
   );
 
-  function handleFieldChange(field: "address" | "project_no" | "meters" | "note", raw: string) {
+  function handleFieldChange(field: "address" | "project_no" | "meters" | "tunkkaus_meters" | "note", raw: string) {
     if (locked) return;
     let updated: Partial<DayRow>;
     let metersVal: number | null;
+
+    const baseMeta = { address: row.address, project_no: row.project_no, meters: row.meters, tunkkaus_meters: row.tunkkaus_meters, note: row.note };
 
     switch (field) {
       case "address":
         updated = { address: raw };
         onRowChange(row.day_id, updated);
-        scheduleMetaSave({ address: raw, project_no: row.project_no, meters: row.meters, note: row.note });
+        scheduleMetaSave({ ...baseMeta, address: raw });
         break;
       case "project_no":
         updated = { project_no: raw };
         onRowChange(row.day_id, updated);
-        scheduleMetaSave({ address: row.address, project_no: raw, meters: row.meters, note: row.note });
+        scheduleMetaSave({ ...baseMeta, project_no: raw });
         break;
       case "meters":
         metersVal = raw === "" ? null : parseFloat(raw);
         if (raw !== "" && isNaN(metersVal!)) return;
         updated = { meters: metersVal };
         onRowChange(row.day_id, updated);
-        scheduleMetaSave({ address: row.address, project_no: row.project_no, meters: metersVal, note: row.note });
+        scheduleMetaSave({ ...baseMeta, meters: metersVal });
+        break;
+      case "tunkkaus_meters":
+        metersVal = raw === "" ? null : parseFloat(raw);
+        if (raw !== "" && isNaN(metersVal!)) return;
+        updated = { tunkkaus_meters: metersVal };
+        onRowChange(row.day_id, updated);
+        scheduleMetaSave({ ...baseMeta, tunkkaus_meters: metersVal });
         break;
       case "note":
         updated = { note: raw || null };
         onRowChange(row.day_id, updated);
-        scheduleMetaSave({ address: row.address, project_no: row.project_no, meters: row.meters, note: raw || null });
+        scheduleMetaSave({ ...baseMeta, note: raw || null });
         break;
     }
   }
@@ -182,6 +192,21 @@ export default function DayRowComponent({
           />
         </div>
       </div>
+
+      {/* Tunkkaus Metrit field (shown when Tunkkaus machine is active) */}
+      {usedMachines.has("Tunkkaus") && (
+        <div className="mb-2">
+          <input
+            type="number"
+            step="0.1"
+            value={row.tunkkaus_meters != null ? String(row.tunkkaus_meters) : ""}
+            onChange={(e) => handleFieldChange("tunkkaus_meters", e.target.value)}
+            disabled={locked}
+            className="w-full text-xs border-b border-gray-200 bg-transparent pb-0.5 focus:outline-none focus:border-orange-400 text-gray-700 disabled:text-gray-400 disabled:cursor-not-allowed placeholder:text-gray-300"
+            placeholder="Tunkkaus Metrit"
+          />
+        </div>
+      )}
 
       {/* Machine chips */}
       <div className="flex flex-wrap gap-1.5">

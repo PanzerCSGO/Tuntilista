@@ -83,7 +83,7 @@ export default function TimesheetCard({ sheet, workerName }: Props) {
       const { dayId, date } = await addDay(sheet.id);
       setRows((prev) => [
         ...prev,
-        { day_id: dayId, date, address: "", project_no: "", meters: null, note: null, machines: {} },
+        { day_id: dayId, date, address: "", project_no: "", meters: null, tunkkaus_meters: null, note: null, machines: {} },
       ].sort((a, b) => a.date.localeCompare(b.date)));
       setSaveStatus("saved");
       setTimeout(() => setSaveStatus("idle"), 2000);

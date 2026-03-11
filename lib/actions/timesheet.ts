@@ -87,6 +87,7 @@ export async function getTimesheetWithRows(
       address: (d as TimesheetDay & { address?: string }).address ?? "",
       project_no: d.project_no ?? "",
       meters: d.meters ?? null,
+      tunkkaus_meters: d.tunkkaus_meters ?? null,
       note: d.note ?? null,
       machines: {},
     });
@@ -117,6 +118,7 @@ export async function getTimesheetWithRows(
           address: "",
           project_no: "",
           meters: null,
+          tunkkaus_meters: null,
           note: null,
           machines: {},
         });
@@ -234,6 +236,7 @@ export async function addDay(timesheetId: string): Promise<{ dayId: string; date
     address: "",
     project_no: "",
     meters: null,
+    tunkkaus_meters: null,
     note: null,
   }).select("id, date").single();
   if (error) throw new Error(error.message);
@@ -249,6 +252,7 @@ export async function upsertDayMeta(data: {
   address: string;
   project_no: string;
   meters: number | null;
+  tunkkaus_meters: number | null;
   note: string | null;
 }): Promise<void> {
   const supabase = await createClient();
@@ -261,6 +265,7 @@ export async function upsertDayMeta(data: {
       address: data.address,
       project_no: data.project_no,
       meters: data.meters,
+      tunkkaus_meters: data.tunkkaus_meters,
       note: data.note,
     })
     .eq("id", data.day_id)
